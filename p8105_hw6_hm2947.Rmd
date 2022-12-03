@@ -68,3 +68,46 @@ weather_df %>%
 As with $r^2$, this distribution is somewhat skewed and has some outliers. 
 
 The point of this is not to say you should always use the bootstrap -- it's possible to establish "large sample" distributions for strange parameters / values / summaries in a lot of cases, and those are great to have. But it is helpful to know that there's a way to do inference even in tough cases. 
+
+
+### Problem 2
+
+## Data cleaning and tidying
+
+```{r}
+homicide_df = read.csv("./data/homicide-data.csv") %>%
+  janitor::clean_names()
+```
+
+```{r}
+homi_tidy = homicide_df %>% 
+  mutate(city_state = str_c(city, "," , state)) %>% 
+  mutate(status = ifelse(disposition == "Closed by arrest", 1, 0), 
+         victim_age = as.numeric(victim_age)) %>% 
+  filter(!city_state %in% c("Dallas,TX", "Phoenix,AZ", "Kansas City,MO", "Tulsa,AL")) %>% 
+  filter(victim_race %in% c("White", "Black"))
+```
+
+## Baltimore regression model
+
+```{r}
+baltimore = 
+  homi_tidy %>% 
+  filter(city_state == "Baltimore,MD")
+
+baltimore_fit = 
+  baltimore %>%
+  glm(status ~ victim_age + victim_sex + victim_race, data = ., family = binomial()) %>% 
+  broom::tidy() %>% 
+  mutate(odds_ratio = exp(estimate),
+         lower_bound = exp(estimate - 1.96*std.error),
+         upper_bound = exp(estimate + 1.96*std.error)) %>%
+    filter(term == "victim_sexMale") %>%
+  select(term, odds_ratio, lower_bound, upper_bound )
+
+  baltimore_fit %>% 
+    knitr::kable(digits = 3)
+```
+
+
+
