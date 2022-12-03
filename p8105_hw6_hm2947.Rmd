@@ -2,7 +2,7 @@
 title: "p8105_hw6_hm2947"
 author: "Matthew Ma"
 date: "2022-12-03"
-output: html_document
+output: github_document
 ---
 
 ```{r setup, include=FALSE}
@@ -12,6 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r load_libraries, message=FALSE}
 library(tidyverse)
 library(modelr)
+library(purrr)
 ```
 
 ### Problem 1
@@ -109,5 +110,142 @@ baltimore_fit =
     knitr::kable(digits = 3)
 ```
 
+## glm for all cities in the dataset
 
+```{r}
+
+city_all = 
+  homi_tidy %>% 
+  nest(data = -city_state) %>% 
+  mutate(models = map(.x = data, ~ glm(status ~ victim_age + victim_race + victim_sex, data = .x, family = "binomial")),
+    results = map(models, broom::tidy)
+    ) %>% 
+  unnest(results) %>% 
+  mutate(odds_ratio = exp(estimate),
+         lower_bound = exp(estimate - 1.96*std.error),
+         upper_bound = exp(estimate + 1.96*std.error)) %>%
+    filter(term == "victim_sexMale") %>%
+  select(city_state, odds_ratio, lower_bound, upper_bound )
+  
+city_all %>% 
+  knitr::kable(digit = 3)
+```
+
+## Plotting the estimated ORs and CIs for each city
+
+```{r}
+
+city_all %>% 
+  mutate(city_state = fct_reorder(city_state, odds_ratio)) %>% 
+  ggplot(aes(x = city_state, y = odds_ratio)) +
+  geom_point() +
+  geom_errorbar(mapping = aes(ymin = lower_bound, ymax = upper_bound))  +
+  labs( x = "City, State",  y = "Odds Ratio", title = "Estimated Odds Ratio and Confidence Intervals of Solving Homicides Comparing Male and Female Victims for Each City ") + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+```
+
+For the majority of the cities investigated, the odds ratio of solving homicides between male and female victims lies in between 0 and 1. Out of the 50 cities, there are only 4 cities' odds ratio has gone beyond 1 which are `Nashville,TN`, `Fresno,CA`, `Stockton,CA`, and `Albuquerque,NM`. The last three cities mentioned have much larger odds ratio than others also with much larger confidence intervals. Larger standard errors could also be inferred.
+
+### Problem 3
+
+## Load and Clean
+
+```{r}
+
+bw_df = read_csv("./data/birthweight.csv")
+
+bw_tidy = 
+  bw_df %>%
+  mutate(babysex = as.factor(babysex),
+         frace = as.factor(frace), 
+         malform = as.factor(malform), 
+         mrace = as.factor(mrace)
+         )
+sum(!complete.cases(bw_tidy))
+# there is no missing values
+```
+
+## Proposing a regression model for birthweight
+
+First I conduct a stepwise method for variable selection.
+
+```{r}
+model_0 <- lm(bwt ~.,
+               data =bw_tidy)
+step(model_0, direction = "both", trace  = FALSE)
+summary(model_0)
+
+```
+
+According to the summary of the stepwise model selections we could choose `babysex`, `bhead`, `blength`, `delwt`, `fincome`, `gaweeks`, `mheight`, `mrace`, `parity`, `ppwt`, `smoken` as our variables. 
+
+## Show a plot of model residuals against fitted values
+
+```{r}
+
+resi_vs_fit =
+  bw_tidy %>% 
+  add_predictions(model_0) %>% 
+  add_residuals(model_0) %>% 
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(formula = 'y ~ x',method = "lm", se = FALSE) +
+  labs(title = "Fitted Values vs. Residuals",
+       x = "Fitted Values", 
+       y = "Residuals",) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+resi_vs_fit
+```
+ From the plot we could observe a cluster of residual points around 0 that fit mostly between 2000-4000. There are some outlying values that are below 1000 fitted value.
+ 
+## Compare with two other models.
+
+```{r}
+
+model_1 = lm(bwt ~ blength + gaweeks, data = bw_tidy)
+
+model_2 = lm(bwt ~ bhead + blength + babysex + bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex,
+               data = bw_tidy)
+```
+
+## Cross-validation
+
+```{r}
+
+cv_df = 
+  crossv_mc(bw_tidy, 100) %>% 
+  mutate(train = map(train, as_tibble),
+    test = map(test, as_tibble))%>% 
+  mutate(
+    model_1  = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    model_2  = map(train, ~lm(bwt ~ bhead * blength * babysex, data = .x)),
+    model_0  = map(train, ~lm(bwt ~ babysex + bhead + blength + delwt + fincome + gaweeks + mheight + mrace + parity + ppwt + smoken, data = .x ))) %>% 
+  mutate(
+    rmse_model_1 = map2_dbl(model_1, test, ~rmse(model = .x, data = .y)),
+    rmse_model_2    = map2_dbl(model_2, test, ~rmse(model = .x, data = .y)),
+    rmse_model_0 = map2_dbl(model_0, test, ~rmse(model = .x, data = .y)))
+  
+
+cv_df %>% 
+  select(starts_with("rmse")) %>%
+  pivot_longer(
+    everything(),
+    names_to = "model",
+    values_to = "rmse",
+    names_prefix = "rmse_"
+  ) %>%
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + 
+  geom_violin() +
+  labs(title = "Comparison of the Cross-Validated Prediction Error", 
+       x = "Models", 
+       y = "Root Mean Square Error (RMSE)") 
+
+  
+```
+
+According to the violin plot, model_0 which is my model has the lowest rmse score which indicates the best model among the three models compared to the other two.
 
